@@ -1,0 +1,234 @@
+---
+title: "Premier League study"
+author: "David Gibert Bosque"
+date: "February, 2019"
+output:
+  rmdformats::readthedown:
+    highlight: tango
+---
+```{r include=FALSE}
+## Cleaning environment
+rm(list = ls())
+```
+
+```{r include=FALSE}
+## Loading libraries
+pacman::p_load(knitr, dplyr, ggplot2, zoo, lubridate, formattable)
+df = read.csv(file = "Z:/Projects/Premier-league-football/Premier League.csv", sep = ",")
+```
+
+#### Loading data
+```{r}
+glimpse(df)
+```
+
+### **First "To do" list of things**:
+
+* Delete '**x**' attribute. Not needed.
+* Format data attributes porperly.
+    * **date:**   As date, not factor.
+    * **season:** As factor, not integer.
+
+#### Selecting all attributes but 'x'
+```{r}
+df = df[,2:ncol(df)]
+names(df)
+```
+
+#### Formatting data
+```{r}
+df$date = as_date(df$date)
+df$season = factor(df$season)
+
+glimpse(df[c("date", "season")])
+```
+
+## **Data Science Task**
+
+## **1.  For each season, which team(s) committed the most fouls?**
+
+*Let's take a look at the Top 3 teams that commited the most fouls for each season.*
+```{r}
+home = df %>%
+  select(home_team, home_fouls, season) %>%
+  group_by(season, home_team) %>%
+  summarise(home_fouls = sum(home_fouls))
+
+away = df %>%
+  select(away_team, away_fouls, season) %>%
+  group_by(season, away_team) %>%
+  summarise(away_fouls = sum(away_fouls))
+
+most_fouls = data.frame(season = home$season,
+                        team = home$home_team,
+                        total_fouls = home$home_fouls + away$away_fouls,
+                        home_fouls = home$home_fouls,
+                        away_fouls = away$away_fouls) %>%
+  arrange(season, desc(total_fouls)) 
+# %>%  group_by(season) %>%  slice(1:3)
+  
+most_fouls_top3 = by(most_fouls, most_fouls["season"], head, n = 3)
+most_fouls_top3
+```
+
+## **2.  How does the number of yellow cards this season compare to previous seasons?**
+#### **What does this tell us about how football has changed?**
+
+*We want to compare the amount of yellow cards considering the same period of time, as the actual season has not finished yet.*
+```{r}
+season_1819 = df %>%
+  filter(season == 1819)
+range(as.yearmon(season_1819$date))
+```
+`August 2018 - January 2019` *is the actual period of time we want to use to compare `yellow cards` between seasons.*
+
+*Let's visualize the total amount of* `yellow cards` *per season using a barplot. In order to do that, we will first filter the data by months, then group by season and adding the ttoal amount of yellow cards.*
+```{r}
+names_months = c("August", "September", "October", "November", "December", "January")
+
+comparing_seasons_cards = df %>%
+  mutate(total_yellow_cards = home_yellow_cards + away_yellow_cards,
+         year_mon = months(date)) %>%
+  select(season, year_mon, total_yellow_cards) %>%
+  filter(year_mon %in% names_months) %>%
+  group_by(season) %>%
+  summarise(total_yellow_cards = sum(total_yellow_cards))
+
+
+cards_compare_plot = ggplot(data = comparing_seasons_cards,
+                            mapping = aes(x = season, y = total_yellow_cards)) +
+  geom_bar(stat = "identity", width = 0.8, fill = "steelblue2") +
+  geom_text(aes(label = total_yellow_cards),
+            vjust = 1.6,
+            color = "white",
+            size = 3.5) +
+  xlab("Season") +
+  ylab(NULL)
+
+cards_compare_plot
+```
+
+*As we can see, this actual season is on average compared with the other ones, for this specific period of time, so we cannot say that football has suffered from any kind of change just looking at the amount of yellow cards.*
+
+*For seasons 203, 304 and 405, there are some missing registers as seen below. There should be 380 played matches every season. This explains the little gap in the barplot above.*
+```{r}
+matches_380 = df %>%
+  select(season) %>%
+  group_by(season) %>%
+  summarise(number_of_matches = n())
+
+ggplot(data = matches_380,
+       mapping = aes(x = season, y = number_of_matches)) +
+  geom_bar(stat = "identity", width = 0.8, fill = "steelblue") +
+  geom_text(aes(label = number_of_matches),
+            vjust = 1.6,
+            color = "white",
+            size = 3.5) +
+  ylab("Number of matches played") +
+  xlab("Season")
+```
+
+## **3.  Which referees would you describe as the most lenient? Why?**
+
+*The most simple and easy approach is to take a look at the total amount of fouls registered by each referee, in all seasons.*
+```{r}
+lenient_referees = df %>%
+  transmute(referee, total_fouls = home_fouls + away_fouls) %>%
+  group_by(referee) %>%
+  summarise(total_fouls = sum(total_fouls),
+            n_matches_participated = n()) %>%
+  arrange(total_fouls)
+
+kable(head(lenient_referees))
+```
+
+*Those are the most lenient referees (using this approach), but they have participated only in 1 match. These takes us to the next idea:*
+```{r}
+dens = density(lenient_referees$n_matches_participated)
+plot(dens, main = "Density of participation in matches")
+polygon(dens, col = "steelblue2", border = "darkblue")
+```
+
+*Looking at the density graph above, we can see that most of the referees in the database participated in less than 100 matches. Maybe it would be interesting to create bins / cutoffs for a minimum of, for example, 114 matches (3 seasons).*
+
+*Doing so, we would get as the most lenient referees the ones shown below*:
+```{r}
+lenient_referees_114 = lenient_referees %>%
+  filter(n_matches_participated > 114) %>%
+  head()
+
+kable(lenient_referees_114)
+```
+
+## A little further investigation due to curiosity.
+```{r}
+plot(x = lenient_referees$n_matches_participated,
+     y = lenient_referees$total_fouls,
+     type = "p", cex = 2, pch = 20, col = "steelblue2",
+     main = "Relation between number of matches participated\nand amount of registered fouls",
+     xlab = "Matches",
+     ylab = "Fouls")
+abline(lm(lenient_referees$total_fouls ~ lenient_referees$n_matches_participated),
+       col = "red")
+
+mat = as.matrix(lenient_referees[ ,c("total_fouls", "n_matches_participated")])
+kable(cor(mat), caption = "Pearson correlation")
+```
+
+*Wanted to see how the number of fouls increased with the number of matches in which a referee has participated. Looks like there is almost a perfect linear correlation between both variables, which a bit weird in my opinion, as I would expect a high correlation between both of them, but 0.99 is too high. This means we could predict the (almost exact) amount of fouls a referee would register depending in how many matches he has participated, and that is just not real. I would say the data has been manipulated somehow, but that is beyond the scope of this report.*
+
+## A different (more complete) approach to find the top 6 lineant referees
+
+**Instead of using the least amount of registered fouls approach, we could use 3 different approaches**:
+
+* Ratio of `yellow+red cards` divided by `amount of fouls`
+* Ratio of `yellow+red cards` divided by amount of `matches participated`.
+
+*The first ratio is biased by the amount of matches participated. For example, two referees with the same ratio but the firt one participating in 5 matches, while the other one in 600.*
+
+*The second approach is biased because it does not take in account the amount of fouls per match.*
+
+*The third approach and the one that will be shown below (although the first and second one are calculated too) should be the most complete, as it takes in account the number of matches, number of fouls and number of cards. The formula is* `((cards/fouls)/matches)*1000`. *This ratio resuts to be very small. Multiplying it by 1000 allows for a better understanding of a "ranking parameter".*
+```{r}
+referees = df %>%
+  select(season, date, referee, home_fouls, away_fouls, home_yellow_cards, home_red_cards) %>%
+  mutate(total_fouls = home_fouls + away_fouls,
+         total_cards = home_yellow_cards + home_red_cards)
+
+
+ratio_cards = referees %>%
+  select(referee, total_cards, total_fouls) %>%
+  group_by(referee) %>%
+  summarise(total_cards = sum(total_cards),
+            
+            total_fouls = sum(total_fouls),
+            
+            cards_x_foul = formattable(x = (total_cards/total_fouls)*50,
+                                       digits = 1,
+                                       format = "f"),
+            
+            n_matches_participated = n(),
+            
+            cards_x_match = formattable(x = total_cards/n_matches_participated,
+                                     digits = 1,
+                                     format = "f"),
+            
+            cards_xfouls_xmatches = formattable(x = ((total_cards/total_fouls)/n_matches_participated)*1000,
+                                     digits = 1,
+                                     format = "f"))
+
+kable(ratio_cards[order(ratio_cards$cards_xfouls_xmatches, decreasing = F)[1:6], ])
+```
+
+*This time the ratio stays 0.0 because the amount of cards shown are 0. It means that, when calculating 0/'something else', the ratio stays 0. Let's just filter the data by at least 5 cards and 114 matches, in order to get something more realistic.*
+```{r}
+most_lineant_approach3 = ratio_cards %>%
+  select(referee, total_cards, total_fouls, cards_xfouls_xmatches, n_matches_participated) %>%
+  filter(total_cards > 5 & n_matches_participated > 114) %>%
+  arrange(cards_xfouls_xmatches)
+
+kable(head(most_lineant_approach3))
+```
+
+*This time, we get the most lineant referees as the ones shown in the table.*
+
